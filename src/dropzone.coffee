@@ -162,6 +162,9 @@ class Dropzone extends Emitter
     # Whether hidden files in directories should be ignored.
     ignoreHiddenFiles: yes
 
+    # Whether to allow directories to be uploaded.
+    acceptDirectories: yes
+
     # You can set accepted mime types here.
     #
     # The default implementation of the `accept()` function will check this
@@ -873,6 +876,11 @@ class Dropzone extends Emitter
 
   # Goes through the directory, and adds each file it finds recursively
   _addFilesFromDirectory: (directory, path) ->
+    if not @options.acceptDirectories
+      directory.status = Dropzone.ERROR
+      @emit "error", directory, "Cannot upload directories, applications, or packages"
+      return
+
     dirReader = directory.createReader()
 
     entriesReader = (entries) =>
