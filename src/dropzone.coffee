@@ -102,6 +102,7 @@ class Dropzone extends Emitter
     "dragover"
     "dragleave"
     "addedfile"
+    "addedfiles"
     "removedfile"
     "thumbnail"
     "error"
@@ -141,16 +142,14 @@ class Dropzone extends Emitter
 
     # The base that is used to calculate the filesize. You can change this to
     # 1024 if you would rather display kibibytes, mebibytes, etc...
+    # 1024 is technically incorrect,
+    # because `1024 bytes` are `1 kibibyte` not `1 kilobyte`.
+    # You can change this to `1024` if you don't care about validity.
     filesizeBase: 1000
 
     # Can be used to limit the maximum number of files that will be handled
     # by this Dropzone
     maxFiles: null
-
-    # The base used to calculate filesizes. 1024 is technically incorrect,
-    # because `1024 bytes` are `1 kibibyte` not `1 kilobyte`.
-    # You can change this to `1024` if you don't care about validity.
-    filesizeBase: 1000
 
     # Can be an object of additional parameters to transfer to the server.
     # This is the same as adding hidden input fields in the form element.
@@ -278,7 +277,11 @@ class Dropzone extends Emitter
         @element.appendChild messageElement
 
       span = messageElement.getElementsByTagName("span")[0]
-      span.textContent = @options.dictFallbackMessage if span
+      if span
+        if span.textContent?
+          span.textContent = @options.dictFallbackMessage
+        else if span.innerText?
+          span.innerText = @options.dictFallbackMessage
 
       @element.appendChild @getFallbackForm()
 
@@ -481,6 +484,7 @@ class Dropzone extends Emitter
     
     queuecomplete: noop
 
+    addedfiles: noop
 
 
     # This template will be chosen when a new file is dropped.
@@ -601,6 +605,8 @@ class Dropzone extends Emitter
 
   getUploadingFiles: -> @getFilesWithStatus Dropzone.UPLOADING
 
+  getAddedFiles: -> @getFilesWithStatus Dropzone.ADDED
+
   # Files that are either queued or uploading
   getActiveFiles: -> file for file in @files when file.status == Dropzone.UPLOADING or file.status == Dropzone.QUEUED
 
@@ -635,6 +641,7 @@ class Dropzone extends Emitter
         @hiddenFileInput.addEventListener "change", =>
           files = @hiddenFileInput.files
           @addFile file for file in files if files.length
+          @emit "addedfiles", files
           setupHiddenFileInput()
       setupHiddenFileInput()
 
@@ -654,7 +661,7 @@ class Dropzone extends Emitter
 
     # Emit a `queuecomplete` event if all files finished uploading.
     @on "complete", (file) =>
-      if @getUploadingFiles().length == 0 and @getQueuedFiles().length == 0
+      if @getAddedFiles().length == 0 and @getUploadingFiles().length == 0 and @getQueuedFiles().length == 0
         # This needs to be deferred so that `queuecomplete` really triggers after `complete`
         setTimeout (=> @emit "queuecomplete"), 0
 
@@ -836,6 +843,7 @@ class Dropzone extends Emitter
     @emit "drop", e
 
     files = e.dataTransfer.files
+    @emit "addedfiles", files
 
     # Even if it's a folder, files.length will contain the folders.
     if files.length
@@ -995,37 +1003,40 @@ class Dropzone extends Emitter
         callback() if callback?
         return
 
-      # Not using `new Image` here because of a bug in latest Chrome versions.
-      # See https://github.com/enyo/dropzone/pull/226
-      img = document.createElement "img"
-
-      img.onload = =>
-        file.width = img.width
-        file.height = img.height
-
-        resizeInfo = @options.resize.call @, file
-
-        resizeInfo.trgWidth ?= resizeInfo.optWidth
-        resizeInfo.trgHeight ?= resizeInfo.optHeight
-
-        canvas = document.createElement "canvas"
-        ctx = canvas.getContext "2d"
-        canvas.width = resizeInfo.trgWidth
-        canvas.height = resizeInfo.trgHeight
-
-        # This is a bugfix for iOS' scaling bug.
-        drawImageIOSFix ctx, img, resizeInfo.srcX ? 0, resizeInfo.srcY ? 0, resizeInfo.srcWidth, resizeInfo.srcHeight, resizeInfo.trgX ? 0, resizeInfo.trgY ? 0, resizeInfo.trgWidth, resizeInfo.trgHeight
-
-        thumbnail = canvas.toDataURL "image/png"
-
-        @emit "thumbnail", file, thumbnail
-        callback() if callback?
-        
-      img.onerror = callback
-
-      img.src = fileReader.result
+      @createThumbnailFromUrl file, fileReader.result, callback
 
     fileReader.readAsDataURL file
+
+  createThumbnailFromUrl: (file, imageUrl, callback) ->
+    # Not using `new Image` here because of a bug in latest Chrome versions.
+    # See https://github.com/enyo/dropzone/pull/226
+    img = document.createElement "img"
+
+    img.onload = =>
+      file.width = img.width
+      file.height = img.height
+
+      resizeInfo = @options.resize.call @, file
+
+      resizeInfo.trgWidth ?= resizeInfo.optWidth
+      resizeInfo.trgHeight ?= resizeInfo.optHeight
+
+      canvas = document.createElement "canvas"
+      ctx = canvas.getContext "2d"
+      canvas.width = resizeInfo.trgWidth
+      canvas.height = resizeInfo.trgHeight
+
+      # This is a bugfix for iOS' scaling bug.
+      drawImageIOSFix ctx, img, resizeInfo.srcX ? 0, resizeInfo.srcY ? 0, resizeInfo.srcWidth, resizeInfo.srcHeight, resizeInfo.trgX ? 0, resizeInfo.trgY ? 0, resizeInfo.trgWidth, resizeInfo.trgHeight
+
+      thumbnail = canvas.toDataURL "image/png"
+
+      @emit "thumbnail", file, thumbnail
+      callback() if callback?
+      
+    img.onerror = callback if callback?
+
+    img.src = imageUrl
 
 
   # Goes through the queue and processes files if there aren't too many already.
@@ -1182,7 +1193,8 @@ class Dropzone extends Emitter
 
     extend headers, @options.headers if @options.headers
 
-    xhr.setRequestHeader headerName, headerValue for headerName, headerValue of headers
+    for headerName, headerValue of headers
+      xhr.setRequestHeader headerName, headerValue if headerValue
 
     formData = new FormData()
 
@@ -1212,8 +1224,10 @@ class Dropzone extends Emitter
     # last parameter
     formData.append @_getParamName(i), files[i], files[i].name for i in [0..files.length-1]
 
-    xhr.send formData
+    @submitRequest xhr, formData, files
 
+  submitRequest: (xhr, formData, files) ->
+    xhr.send formData
 
   # Called internally when processing is finished.
   # Individual callbacks have to be called in the appropriate sections.
@@ -1243,7 +1257,7 @@ class Dropzone extends Emitter
 
 
 
-Dropzone.version = "4.0.0"
+Dropzone.version = "4.0.1"
 
 
 # This is a map of options for your different dropzones. Add configurations

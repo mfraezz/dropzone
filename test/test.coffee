@@ -1583,6 +1583,11 @@ describe "Dropzone", ->
           dropzone.uploadFile mockFile
           requests[0].requestHeaders["Foo-Header"].should.eql 'foobar'
 
+        it "should not set headers on the xhr object that are empty", ->
+          dropzone.options.headers = {"X-Requested-With": null}
+          dropzone.uploadFile mockFile
+          Object.keys(requests[0].requestHeaders).should.not.contain("X-Requested-With")
+
         it "should properly use the paramName without [n] as file upload if uploadMultiple is false", (done) ->
           dropzone.options.uploadMultiple = false
           dropzone.options.paramName = "myName"
@@ -1697,7 +1702,7 @@ describe "Dropzone", ->
             @_finished files, null, null
           ), 1
 
-        completedFiles = 0        
+        completedFiles = 0
         dropzone.on "complete", (file) ->
           completedFiles++
 
