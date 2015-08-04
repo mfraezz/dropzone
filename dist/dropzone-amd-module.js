@@ -143,6 +143,7 @@
       params: {},
       clickable: true,
       ignoreHiddenFiles: true,
+      acceptDirectories: true,
       acceptedFiles: null,
       acceptedMimeTypes: null,
       autoProcessQueue: true,
@@ -919,6 +920,11 @@
 
     Dropzone.prototype._addFilesFromDirectory = function(directory, path) {
       var dirReader, entriesReader;
+      if (!this.options.acceptDirectories) {
+        directory.status = Dropzone.ERROR;
+        this.emit("error", directory, "Cannot upload directories, applications, or packages");
+        return;
+      }
       dirReader = directory.createReader();
       entriesReader = (function(_this) {
         return function(entries) {
